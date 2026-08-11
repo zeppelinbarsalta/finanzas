@@ -460,7 +460,7 @@ input.num{font-variant-numeric:tabular-nums}
         <div class="panel-head"><h2>Categorías de gasto</h2></div>
         <div class="form-row" style="grid-template-columns:1.5fr 1fr .8fr auto;max-width:640px">
           <div class="fld"><label>Nombre</label><input type="text" id="newCatName" placeholder="Ej: Combustible"></div>
-          <div class="fld"><label>Grupo</label><input type="text" id="newCatGroup" placeholder="Ej: Vehículos"></div>
+          <div class="fld"><label>Grupo</label><input type="text" id="newCatGroup" list="gruposList" placeholder="Ej: Vehículos" autocomplete="off"><datalist id="gruposList"></datalist></div>
           <div class="fld"><label>Tipo</label><select id="newCatTipo"><option value="fijo">Fijo</option><option value="variable">Variable</option></select></div>
           <div class="fld"><label>&nbsp;</label><button class="btn sm" onclick="addCategoria()">Agregar</button></div>
         </div>
@@ -506,12 +506,21 @@ let S = load();
    La clave de acceso se define en el Apps Script, no acá.
    ========================================================================== */
 const CLOUD = { url: "https://script.google.com/macros/s/AKfycbzrCnNUbJ5T-yRia1abcgSogE5094OZmYwVJEkDOteF_pMay1LSB2VFa2NmSBpjOR4nvA/exec" };
-  let cloudOn=false, clave=null, syncTimer=null, applyingRemote=false;
+let cloudOn=false, clave=null, syncTimer=null, applyingRemote=false;
 function cloudConfigured(){ return CLOUD.url && CLOUD.url.indexOf('PEGA_')!==0; }
 
 function load(){ try{const r=localStorage.getItem(KEY); if(!r) return structuredClone(DEFAULT); const s=JSON.parse(r);
   ['ingresos','gastos','patrimonio','recurrentes','tarjetas','comprasCuotas'].forEach(k=>{if(!Array.isArray(s[k]))s[k]=[]});
+  canonizarGrupos(s);
   return s; }catch(e){return structuredClone(DEFAULT)} }
+function normGrupo(s){ return (s||'').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim(); }
+function canonizarGrupos(s){ // fusiona grupos que solo difieren en mayúsculas/acentos, conservando la primera forma vista
+  if(!Array.isArray(s.categorias)) return;
+  const canon={};
+  s.categorias.forEach(c=>{ const k=normGrupo(c.g||'Otros'); if(!canon[k]) canon[k]=(c.g||'Otros'); });
+  s.categorias.forEach(c=>{ c.g=canon[normGrupo(c.g||'Otros')]; });
+}
+function gruposUnicos(){ const out=[]; S.categorias.forEach(c=>{ if(!out.some(g=>normGrupo(g)===normGrupo(c.g))) out.push(c.g); }); return out; }
 function save(){ localStorage.setItem(KEY, JSON.stringify(S)); scheduleCloud(); }
 function scheduleCloud(){ if(!cloudOn||applyingRemote) return; setSync('wait','Guardando…'); clearTimeout(syncTimer); syncTimer=setTimeout(pushCloud,900); }
 function pushCloud(){
@@ -722,11 +731,11 @@ function renderPresupuesto(){
   const realPorCat={}; S.gastos.filter(g=>mesKey(g.fecha)===mk).forEach(g=>{realPorCat[g.categoria]=(realPorCat[g.categoria]||0)+normARS(g.monto,g.moneda)});
   cuotasDelMes(mk).forEach(x=>{realPorCat[x.categoria]=(realPorCat[x.categoria]||0)+x.ars});
   // agrupar por grupo
-  const grupos={}; S.categorias.forEach((c,idx)=>{(grupos[c.g]=grupos[c.g]||[]).push({...c,idx})});
+  const grupos={}; S.categorias.forEach((c,idx)=>{ const k=normGrupo(c.g); if(!grupos[k])grupos[k]={label:c.g,items:[]}; grupos[k].items.push({...c,idx}); });
   let html=`<table><thead><tr><th>Categoría</th><th class="r">Presupuesto (ARS)</th><th class="r">Real del mes</th><th class="r">Restante</th><th style="width:130px">Uso</th></tr></thead><tbody>`;
-  Object.entries(grupos).forEach(([grupo,cats])=>{
-    html+=`<tr><td colspan="5" style="background:var(--tinta);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--oro);padding:8px 12px">${grupo}</td></tr>`;
-    cats.forEach(c=>{
+  Object.values(grupos).forEach(gr=>{
+    html+=`<tr><td colspan="5" style="background:var(--tinta);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--oro);padding:8px 12px">${gr.label}</td></tr>`;
+    gr.items.forEach(c=>{
       const real=realPorCat[c.n]||0; const rest=(+c.pres)-real; const pct=c.pres>0?Math.min(real/c.pres*100,100):0;
       html+=`<tr><td>${c.n} <span class="tag ${c.t}">${c.t}</span></td>
       <td class="r"><input type="number" class="num" style="width:130px;padding:6px 8px" value="${c.pres||0}" onchange="setPres(${c.idx},this.value)"></td>
@@ -906,10 +915,11 @@ function renderAjustes(){
   document.getElementById('cfgEmerg').value=S.config.emergMeses;
   document.getElementById('cfgInfla').value=S.config.inflacion;
   document.getElementById('fuentesChips').innerHTML=S.fuentes.map((f,i)=>`<div class="chip">${f}<span class="x" onclick="delFuente(${i})">✕</span></div>`).join('');
-  const grupos={}; S.categorias.forEach((c,i)=>{(grupos[c.g]=grupos[c.g]||[]).push({...c,i})});
-  document.getElementById('catList').innerHTML=Object.entries(grupos).map(([g,cs])=>`
-    <div style="margin-bottom:12px"><div style="font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--oro);margin-bottom:7px">${g}</div>
-    <div class="chips">${cs.map(c=>`<div class="chip">${c.n} <span class="tag ${c.t}" style="font-size:9px">${c.t}</span><span class="x" onclick="delCategoria(${c.i})">✕</span></div>`).join('')}</div></div>`).join('');
+  const dl=document.getElementById('gruposList'); if(dl) dl.innerHTML=gruposUnicos().map(g=>`<option value="${g}">`).join('');
+  const grupos={}; S.categorias.forEach((c,i)=>{ const k=normGrupo(c.g); if(!grupos[k])grupos[k]={label:c.g,items:[]}; grupos[k].items.push({...c,i}); });
+  document.getElementById('catList').innerHTML=Object.values(grupos).map(gr=>`
+    <div style="margin-bottom:12px"><div style="font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--oro);margin-bottom:7px">${gr.label}</div>
+    <div class="chips">${gr.items.map(c=>`<div class="chip">${c.n} <span class="tag ${c.t}" style="font-size:9px">${c.t}</span><span class="x" onclick="delCategoria(${c.i})">✕</span></div>`).join('')}</div></div>`).join('');
 }
 
 /* =================== ACCIONES =================== */
@@ -953,7 +963,7 @@ function saveConfig(){
 }
 function addFuente(){ const v=document.getElementById('newFuente').value.trim(); if(!v)return; S.fuentes.push(v); document.getElementById('newFuente').value=''; save(); fillSelects(); renderAjustes(); }
 function delFuente(i){ S.fuentes.splice(i,1); save(); fillSelects(); renderAjustes(); }
-function addCategoria(){ const n=document.getElementById('newCatName').value.trim(), g=document.getElementById('newCatGroup').value.trim()||'Otros', t=document.getElementById('newCatTipo').value; if(!n)return; S.categorias.push({n,g,t,pres:0}); document.getElementById('newCatName').value='';document.getElementById('newCatGroup').value=''; save(); fillSelects(); renderAjustes(); }
+function addCategoria(){ const n=document.getElementById('newCatName').value.trim(), gRaw=document.getElementById('newCatGroup').value.trim()||'Otros', t=document.getElementById('newCatTipo').value; if(!n)return; const ex=S.categorias.find(c=>normGrupo(c.g)===normGrupo(gRaw)); const g=ex?ex.g:gRaw; S.categorias.push({n,g,t,pres:0}); document.getElementById('newCatName').value='';document.getElementById('newCatGroup').value=''; save(); fillSelects(); renderAjustes(); }
 function delCategoria(i){ S.categorias.splice(i,1); save(); fillSelects(); renderAjustes(); }
 
 function backupJSON(){ const blob=new Blob([JSON.stringify(S,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='respaldo_finanzas_'+new Date().toISOString().slice(0,10)+'.json'; a.click(); toast('Respaldo descargado'); }
@@ -1022,7 +1032,7 @@ function loadFromCloud(silent){
       cloudOn=true; document.getElementById('authOverlay').classList.remove('show');
       if(d.payload){
         applyingRemote=true;
-        try{ S=JSON.parse(d.payload); ['ingresos','gastos','patrimonio','recurrentes','tarjetas','comprasCuotas'].forEach(k=>{if(!Array.isArray(S[k]))S[k]=[]}); localStorage.setItem(KEY,JSON.stringify(S)); }catch(e){}
+        try{ S=JSON.parse(d.payload); ['ingresos','gastos','patrimonio','recurrentes','tarjetas','comprasCuotas'].forEach(k=>{if(!Array.isArray(S[k]))S[k]=[]}); canonizarGrupos(S); localStorage.setItem(KEY,JSON.stringify(S)); }catch(e){}
         applyingRemote=false; renderAll();
         setSync('ok','Sincronizado');
       } else {
