@@ -506,7 +506,7 @@ let S = load();
    La clave de acceso se define en el Apps Script, no acá.
    ========================================================================== */
 const CLOUD = { url: "https://script.google.com/macros/s/AKfycbzrCnNUbJ5T-yRia1abcgSogE5094OZmYwVJEkDOteF_pMay1LSB2VFa2NmSBpjOR4nvA/exec" };
-let cloudOn=false, clave=null, syncTimer=null, applyingRemote=false;
+  let cloudOn=false, clave=null, syncTimer=null, applyingRemote=false;
 function cloudConfigured(){ return CLOUD.url && CLOUD.url.indexOf('PEGA_')!==0; }
 
 function load(){ try{const r=localStorage.getItem(KEY); if(!r) return structuredClone(DEFAULT); const s=JSON.parse(r);
