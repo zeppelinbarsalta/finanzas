@@ -219,7 +219,7 @@ input.num{font-variant-numeric:tabular-nums}
     <div class="nav-item" data-view="proyeccion"><span class="ic">↗</span>Proyección</div>
     <div class="nav-item" data-view="ajustes"><span class="ic">⚙</span>Ajustes</div>
   </nav>
-  <div class="nav-foot">Centro Financiero · <b style="color:var(--oro)">v3</b><br>Sincroniza con tu planilla de Google.</div>
+  <div class="nav-foot">Centro Financiero · <b style="color:var(--oro)">v4</b><br>Sincroniza con tu planilla de Google.</div>
 </aside>
 
 <div id="main">
@@ -299,6 +299,15 @@ input.num{font-variant-numeric:tabular-nums}
 
     <!-- ================= GASTOS ================= -->
     <section class="view" id="view-gastos">
+      <div class="panel" id="dictadoPanel">
+        <div class="panel-head"><h2>Cargar por dictado</h2><span class="hint">Tocá el campo y usá el micrófono del teclado</span></div>
+        <div style="display:flex;gap:10px;align-items:stretch;flex-wrap:wrap">
+          <input type="text" id="dictadoTexto" placeholder="Ej: cargué nafta a la camioneta 40 mil con la Visa Galicia" style="flex:1;min-width:240px" onkeydown="if(event.key==='Enter')interpretarDictado()">
+          <button class="btn" onclick="interpretarDictado()">Interpretar</button>
+          <button class="btn ghost" onclick="document.getElementById('dictadoTexto').value='';document.getElementById('dictadoMsg').innerHTML=''">Limpiar</button>
+        </div>
+        <div id="dictadoMsg" style="margin-top:10px"></div>
+      </div>
       <div class="panel">
         <div class="panel-head"><h2>Registrar gasto</h2></div>
         <div class="form-row" style="grid-template-columns:repeat(5,1fr) auto">
@@ -932,6 +941,112 @@ function addIngreso(){
   S.ingresos.push({id:uid(),fecha:f,fuente:fu,monto:+m,moneda:mo,nota:n}); save();
   document.getElementById('inMonto').value='';document.getElementById('inNota').value='';
   renderAll(); toast('Ingreso agregado');
+}
+/* =================== DICTADO: MOTOR DE INTERPRETACIÓN =================== */
+const NUM_PAL={cero:0,un:1,uno:1,una:1,dos:2,tres:3,cuatro:4,cinco:5,seis:6,siete:7,ocho:8,nueve:9,diez:10,once:11,doce:12,trece:13,catorce:14,quince:15,dieciseis:16,diecisiete:17,dieciocho:18,diecinueve:19,veinte:20,veintiuno:21,veintidos:22,veintitres:23,veinticuatro:24,veinticinco:25,veintiseis:26,veintisiete:27,veintiocho:28,veintinueve:29,treinta:30,cuarenta:40,cincuenta:50,sesenta:60,setenta:70,ochenta:80,noventa:90,cien:100,ciento:100,doscientos:200,trescientos:300,cuatrocientos:400,quinientos:500,seiscientos:600,setecientos:700,ochocientos:800,novecientos:900};
+function palabrasANumero(t){
+  const ws=t.split(/[\s-]+/); let total=0,cur=0,found=false;
+  for(const w of ws){
+    if(w==='y')continue;
+    if(w==='mil'){ cur=(cur||1)*1000; total+=cur; cur=0; found=true; continue; }
+    if(w==='millon'||w==='millones'){ cur=(cur||1)*1000000; total+=cur; cur=0; found=true; continue; }
+    if(NUM_PAL[w]!==undefined){ cur+=NUM_PAL[w]; found=true; }
+  }
+  total+=cur; return found? total: null;
+}
+function parseMonto(t){
+  let m=t.match(/(\d+(?:[.,]\d+)?)\s*(?:mil|lucas?|palos?)\b/); // "40 mil", "15 lucas"
+  if(m){ return Math.round(parseFloat(m[1].replace(/\./g,'').replace(',','.'))*1000); }
+  const nums=t.match(/\d[\d.]*(?:,\d+)?/g); // números sueltos
+  if(nums){ const vals=nums.map(s=>parseFloat(s.replace(/\./g,'').replace(',','.'))).filter(v=>!isNaN(v)); if(vals.length) return Math.round(Math.max(...vals)); }
+  return palabrasANumero(t); // "cuarenta mil"
+}
+function parseCuotas(t){ const m=t.match(/(\d+)\s*(?:cuotas?|pagos?)/); return m?parseInt(m[1]):null; }
+function detectarTarjetaDict(t){ for(const tj of S.tarjetas){ const n=normGrupo(tj.nombre); if(n && t.includes(n)) return tj; } return null; }
+function resolverCat(nombre){ if(!nombre)return null; const k=normGrupo(nombre); let c=S.categorias.find(x=>normGrupo(x.n)===k); if(c)return c.n; c=S.categorias.find(x=>normGrupo(x.n).includes(k)||k.includes(normGrupo(x.n))); return c?c.n:null; }
+function detectarCategoria(t){
+  const has=(...ws)=>ws.some(w=>t.includes(w));
+  const cdm=has('cdm','cede eme','se de eme','ce de eme');
+  const veh = has('camioneta')?'camioneta' : has('moto')?'moto' : (has('auto')?(has('laura')?'auto laura':'auto cami'):null);
+  if(has('nafta','gasoil','combustible','ypf','estacion')){
+    if(veh==='moto') return 'Combustible moto';
+    if(veh==='auto laura'||veh==='auto cami') return 'combustible auto cami';
+    return 'Combustible Camioneta'; // camioneta o sin aclarar
+  }
+  if(has('seguro')){
+    if(veh==='moto') return 'seguro moto';
+    if(veh==='auto laura'||veh==='auto cami') return 'seguro auto cami';
+    return 'Seguro Camioneta';
+  }
+  if(has('service','arreglo','arregle','taller','mantenimiento')){
+    if(cdm) return 'Mantenimiento CDM';
+    if(has('casa')) return 'Mantenimiento casa';
+    if(veh==='moto') return 'mantenimiento moto';
+    if(veh==='auto laura') return 'Mantenimiento auto laura';
+    if(veh==='auto cami') return 'mantenimiento auto cami';
+    if(veh==='camioneta') return 'Mantenimiento camioneta';
+    return null; // mantenimiento sin contexto claro
+  }
+  if(has('luz','agua','inmobiliario','inmov','expensas')) return cdm?'Luz agua e inmov CDM':'Luz agua e inmov olavarria';
+  if(has('gas')) return cdm?'gas cdm':'Gas';
+  if(has('internet','wifi','wi fi')) return cdm?'internet CDM':'internet';
+  if(has('alarma')) return 'Alarma';
+  if(has('telefono','telefonia','celular')) return 'Telefonia';
+  if(has('margarita','limpieza')){ return has('aporte','aportes')?'Aportes Margarita':'Limpieza Margarita sueldo'; }
+  if(has('libreria')&&has('aporte','aportes')) return 'Aportes libreria cdm';
+  if(has('colegio','escuela')){
+    if(has('cami','camila')) return 'Colegio Cami';
+    if(has('lucho','lucas','luciano')) return 'Colegio Lucho';
+    return null; // colegio sin persona
+  }
+  if(has('super','mayorista','mandados','changuito','almacen','mercado')) return 'super y mayorista';
+  if(cdm && has('alimento','alimentos','comida')) return 'Alimentos CDM';
+  if(has('comida','delivery','rotiseria','vianda','preparada','alimento','alimentos')) return 'alimentos';
+  if(has('medico','farmacia','remedio','remedios','medicina','obra social')) return 'Medicina';
+  if(has('ropa','indumentaria','zapatillas','zapatos')) return has('cami','camila')?'Indumentaria Cami':'Indumentaria';
+  if(has('viaje','viajes','pasaje','pasajes','vuelo')) return 'viajes';
+  return null;
+}
+function parseDictado(raw){
+  const t=normGrupo(raw);
+  const cuotas=parseCuotas(t);
+  const tSinCuotas=t.replace(/(\d+)\s*(cuotas?|pagos?)/g,' ');
+  return { monto:parseMonto(tSinCuotas), cuotas, usd:/d[oó]lar|dolares|usd|verdes/.test(t),
+           catName:detectarCategoria(t), tarjeta:detectarTarjetaDict(t) };
+}
+function interpretarDictado(){
+  const raw=document.getElementById('dictadoTexto').value, msg=document.getElementById('dictadoMsg');
+  if(!raw.trim()){ msg.innerHTML=''; return; }
+  const p=parseDictado(raw), cat=resolverCat(p.catName);
+  const gc=document.getElementById('gCat');
+  // compra en cuotas (más de 1 cuota + tarjeta) → preparar en Tarjetas
+  if(p.cuotas && p.cuotas>1 && p.tarjeta){
+    go('tarjetas');
+    if(p.monto!=null) document.getElementById('cuMonto').value=p.monto;
+    document.getElementById('cuCuotas').value=p.cuotas;
+    document.getElementById('cuMoneda').value=p.usd?'USD':'ARS';
+    document.getElementById('cuTarjeta').value=p.tarjeta.id;
+    if(cat) document.getElementById('cuCat').value=cat;
+    document.getElementById('cuConcepto').value=raw;
+    autoPrimeraCuota();
+    toast('Compra en cuotas preparada en Tarjetas · revisá y confirmá');
+    msg.innerHTML='';
+    return;
+  }
+  // gasto normal → precargar el formulario de abajo
+  if(p.monto!=null) document.getElementById('gMonto').value=p.monto;
+  document.getElementById('gMoneda').value=p.usd?'USD':'ARS';
+  gc.value = cat || '';
+  gc.style.borderColor = cat? '' : 'var(--rojo)';
+  document.getElementById('gNota').value = p.tarjeta? ('Pagado con '+p.tarjeta.nombre) : '';
+  const avisos=[];
+  if(p.monto===null) avisos.push('no detecté el monto');
+  if(!cat) avisos.push(p.catName? ('no encontré la categoría "'+p.catName+'"') : 'no reconocí la categoría');
+  if(avisos.length){
+    msg.innerHTML=`<div style="color:var(--rojo);font-size:13px">⚠ Entendí a medias: ${avisos.join(' · ')}. Completá lo que falte abajo y tocá Agregar.</div>`;
+  } else {
+    msg.innerHTML=`<div style="color:var(--verde);font-size:13px">✓ Entendí: <b>${cat}</b> · ${p.usd?'US$':'$'} ${fmtRaw(p.monto)}${p.tarjeta?(' · '+p.tarjeta.nombre):''}. Revisá abajo y tocá Agregar.</div>`;
+  }
 }
 function addGasto(){
   const f=document.getElementById('gFecha').value, c=document.getElementById('gCat').value, m=document.getElementById('gMonto').value, mo=document.getElementById('gMoneda').value, n=document.getElementById('gNota').value;
